@@ -1,5 +1,5 @@
 # stock_robot
-## A flexible custom feature engine and automated trading program powered by genetic programming, machine learning and real-time data.
+## A flexible, custom-feature engine and automated trading program powered by genetic programming, machine learning and real-time data.
 
 ###The Concept: Build a model which can reliably predict stock price movements 'lag' number of time periods in the future. The model outcome is binary, with an outcome of 1 if the stock price changes more than a given value, referred to as the 'growth_threshold', and represented as a percent. The model should be flexible in temporal granularity (1 minute, 5 minute, 1 hour, etc.)
 
