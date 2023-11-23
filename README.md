@@ -12,4 +12,4 @@ The chronology of processes to accomplish this are as follows:
 - DEAP_clean.py utilizes genetic programming to select optimal input parameter values for a given custom indicator and its supplied input parameter value dictionary. As it is written, it uses multi-objective selection criteria with ML scoring metrics based on the computationally ideal Logit model
 - DEAP_ensemble.py optimizes a group of custom features cohesively, first allowing the 'lag' and 'growth_thresold' variable to be adjusted before taking a weighted mean amongst the top performing features to establish a fixed 'lag' and 'growth_thresold' value that all features are optimized on once again in a second round
 - optimization_pipeline.py connects the data collection and model creation process, collectively creating a flexible optimization pipeline. It pulls all the functions present in feature_functions.py, as well as their parameter dictionaries, preparing them as needed to be optimized through the DEAP process. It additionally uses the optimized features to generate an X and y matrix which are used to train a neural net model. 
-[...]
+- [...]
