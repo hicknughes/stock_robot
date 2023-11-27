@@ -1,7 +1,7 @@
 # stock_robot
 ## A flexible, custom-feature engine and automated trading program powered by genetic programming, machine learning and real-time data.
 
-The Concept: Build a model which can reliably predict stock price movements 'lag' number of time periods in the future. The model outcome is binary, with an outcome of 1 if the stock price changes more than a given value, referred to as the 'growth_threshold', and represented as a percent. The model should be flexible in temporal granularity (1 minute, 5 minute, 1 hour, etc.)
+The Concept: Build a model which can reliably predict stock price movements 'lag' number of time periods in the future. The model outcome is binary, with an outcome of 1 if the stock price changes more than a given value, referred to as the 'growth_threshold', and represented as a percent. The model is flexible in temporal granularity (1 minute, 5 minute, 1 hour, etc.)
 
 i.e. with a lag value of 4, a growth_threshold of 0.01 and a temporal_granularity of fifteen_minute, the model would be trained to predict if there would be 1% growth over the next (4 * fifteen_minute)= 60 minutes.
 
