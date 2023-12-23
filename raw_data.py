@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -9,6 +8,7 @@ Each temporal_granularity has a corresponding tolerance for missing data and tim
 optimized custom features to warm up in time to be trading no later than 11 am, though 9:30 am is the objective
 """
 import pandas as pd
+import temporal_backend as tb
 from datetime import datetime as dt
 from datetime import timedelta
 from polygon import RESTClient
@@ -60,53 +60,14 @@ def raw_data(polygon_api_key, tkr, start_date, end_date, temporal_granularity, p
 
     '''
     assert dt.strptime(start_date, "%Y-%m-%d") < dt.strptime(end_date, "%Y-%m-%d"), "Start date must come before end date"
-    one_minute_temporal_params = {'polygon_timespan': 'minute',
-                                  'consecutive_nan_limit': 45,
-                                  'cons_zero_growth_limit': 15,
-                                  'polygon_multiplier': 1,
-                                  'base_index_freq': "1min",
-                                  'daterange_freq': "W"} # "W" = Weekly
-    three_minute_temporal_params = {'polygon_timespan': 'minute',
-                                  'consecutive_nan_limit': 15,
-                                  'cons_zero_growth_limit': 5,
-                                  'polygon_multiplier': 3,
-                                  'base_index_freq': "3min",
-                                  'daterange_freq': "W"} # "W" = Weekly; "SM" = Twice monthly (15th and end of month)
-    five_minute_temporal_params = {'polygon_timespan': 'minute',
-                                  'consecutive_nan_limit': 9,
-                                  'cons_zero_growth_limit': 3,
-                                  'polygon_multiplier': 5,
-                                  'base_index_freq': "5min",
-                                  'daterange_freq': "W"} # "W" = Weekly; "SM" = Twice monthly (15th and end of month)
-    fifteen_minute_temporal_params = {'polygon_timespan': 'minute',
-                                  'consecutive_nan_limit': 3,
-                                  'cons_zero_growth_limit': 2,
-                                  'polygon_multiplier': 15,
-                                  'base_index_freq': "15min",
-                                  'daterange_freq': "W"} # "W" = Weekly; "SM" = Twice monthly (15th and end of month)
-    one_hour_temporal_params = {'polygon_timespan': 'hour',
-                                  'polygon_multiplier': 1, 
-                                  'base_index_freq': "1h",
-                                  'daterange_freq': "M"} # "A" = Annual; Q = Quarterly
-    one_day_temporal_params = {'polygon_timespan': 'day',
-                                  'polygon_multiplier': 1, 
-                                  'base_index_freq': "1D",
-                                  'daterange_freq': "A"} # "A" = Annual; Q = Quarterly
-    temporal_params = {'one_minute': one_minute_temporal_params,
-                       'three_minute': three_minute_temporal_params,
-                       'five_minute': five_minute_temporal_params,
-                       'fifteen_minute': fifteen_minute_temporal_params,
-                       'one_hour': one_hour_temporal_params,
-                       'one_day': one_day_temporal_params}
-    valid_temportal_values = {'one_minute', 'three_minute', 'five_minute', 'fifteen_minute', 'one_hour', 'one_day'}
-    if temporal_granularity not in valid_temportal_values:
-        raise ValueError(f"Invalid temporal_granularity. Please choose one of {valid_temportal_values}")
+    if temporal_granularity not in tb.valid_temportal_values:
+        raise ValueError(f"Invalid temporal_granularity. Please choose one of {tb.valid_temportal_values}")
     
     # Connecting to Poligon.io API
     client = RESTClient(polygon_api_key) 
 
     #Creating date intervals creates date ranges to pull data in chunks that don't violate API limits/data limit restrictions
-    daterange = pd.date_range(start_date, end_date, freq=temporal_params[temporal_granularity]['daterange_freq']) #bi monthly date list between start/end dates
+    daterange = pd.date_range(start_date, end_date, freq=tb.temporal_params[temporal_granularity]['daterange_freq']) #bi monthly date list between start/end dates
     date_intervals = [start_date]
     for i in range(len(daterange)):
         date_intervals.append(str(daterange[i].date()))
@@ -129,8 +90,8 @@ def raw_data(polygon_api_key, tkr, start_date, end_date, temporal_granularity, p
         # Data query with if/else to control for date ranges that return empty frames
         if date_start != date_end:
             resp = client.list_aggs(tkr, from_=date_start, to=date_end,
-                                   timespan = temporal_params[temporal_granularity]['polygon_timespan'], 
-                                   multiplier = temporal_params[temporal_granularity]['polygon_multiplier'],
+                                   timespan = tb.temporal_params[temporal_granularity]['polygon_timespan'], 
+                                   multiplier = tb.temporal_params[temporal_granularity]['polygon_multiplier'],
                                    limit=50000) 
         else:
             continue
@@ -160,15 +121,15 @@ def raw_data(polygon_api_key, tkr, start_date, end_date, temporal_granularity, p
                 date_strings_with_time = [day + ' 00:00:00' for day in trading_days]
                 base = pd.DataFrame({'Timestamps': date_strings_with_time})
             else:
-                if temporal_granularity in {'one_minute'}:
-                    timepull_range = ('08:00', '16:00')
-                elif temporal_granularity in {'three_minute', 'five_minute'}:
-                    timepull_range = ('07:00', '16:00')
-                elif temporal_granularity in {'fifteen_minute', 'one_hour'}:
+                if temporal_granularity in tb.datapull_8am_to_4pm_granularities:
+                    timepull_range = ('08:00', '15:59')
+                elif temporal_granularity in tb.datapull_7am_to_4pm_granularities:
+                    timepull_range = ('07:00', '15:59')
+                elif temporal_granularity in tb.datapull_4am_to_8pm_granularities:
                     timepull_range = ('04:00', '19:59')
                 l = (pd.DataFrame(columns=['NULL'], 
                                   index=pd.date_range(today, tomorrow,
-                                                      freq=temporal_params[temporal_granularity]['base_index_freq']))
+                                                      freq=tb.temporal_params[temporal_granularity]['base_index_freq']))
                        .between_time(timepull_range[0], timepull_range[1])
                        .index.strftime('%Y-%m-%d %H:%M:%S')
                        .tolist()
@@ -200,11 +161,12 @@ def raw_data(polygon_api_key, tkr, start_date, end_date, temporal_granularity, p
 
     # Remove days with excess consecutive rows of missing data within sub-1 hour temporal granularities
     cons_nan_days_dropped = []    
-    if temporal_granularity in {'one_minute', 'three_minute', 'five_minute', 'fifteen_minute'}:
+    cons_nan_dropped_data = pd.DataFrame()
+    if temporal_granularity in tb.granularities_to_eliminate_cons_nans_and_0growth:
         grouped = masterbase.groupby('day')
         for day, group_df in grouped:     
             consecutive_nan_count = group_df['close'].isna().astype(int).groupby(group_df['close'].notna().cumsum()).cumsum()
-            if max(consecutive_nan_count) > temporal_params[temporal_granularity]['consecutive_nan_limit']:
+            if max(consecutive_nan_count) > tb.temporal_params[temporal_granularity]['consecutive_nan_limit']:
                 cons_nan_days_dropped.append(day)
         cons_nan_dropped_data = masterbase[masterbase.day.isin(cons_nan_days_dropped)].reset_index(drop=True)
         masterbase = masterbase[~masterbase.day.isin(cons_nan_days_dropped)].reset_index(drop=True)
@@ -249,13 +211,14 @@ def raw_data(polygon_api_key, tkr, start_date, end_date, temporal_granularity, p
     
     # Remove days with compromised data, indicated by static data and thus zero growth readings
     cons_0growth_days_dropped = []
+    zero_growth_dropped_data = pd.DataFrame()
     zero_growth_count = sum(masterbase['growth_rate'] == 0)
-    zero_growth_percent = zero_growth_count / len(masterbase)
-    if temporal_granularity in {'one_minute', 'three_minute', 'five_minute', 'fifteen_minute'}:
+    zero_growth_percent = round(zero_growth_count / len(masterbase), 3)
+    if temporal_granularity in tb.granularities_to_eliminate_cons_nans_and_0growth:
         grouped = masterbase.groupby('day') # Group the DataFrame by 'day'
         for day, group_df in grouped:     
             consecutive_zero_growth_count = (group_df['growth_rate'] == 0).astype(int).groupby(group_df['close'].notna().cumsum()).cumsum()
-            if max(consecutive_zero_growth_count) > temporal_params[temporal_granularity]['cons_zero_growth_limit']:
+            if max(consecutive_zero_growth_count) > tb.temporal_params[temporal_granularity]['cons_zero_growth_limit']:
                 cons_0growth_days_dropped.append(day)
         zero_growth_dropped_data = masterbase[masterbase.day.isin(cons_0growth_days_dropped)].reset_index(drop=True)
         output_dataframe = masterbase[~masterbase.day.isin(cons_0growth_days_dropped)].reset_index(drop=True)
@@ -279,17 +242,6 @@ def raw_data(polygon_api_key, tkr, start_date, end_date, temporal_granularity, p
                     'Zero_Growth_Count': str(zero_growth_percent) + "% of data. " + str(zero_growth_count) + " rows in total."}
 
     return output_dataframe, report_stats
-
-# ### TEST ###
-# polygon_api_key = "GpjjoRW_XKUaCLvWWurjuMUwF34oHvpD" 
-# tkr = "NVDA"
-# temporal_granularity = 'fifteen_minute'
-# start_date = "2021-11-23"
-# end_date = "2023-11-19"
-# paid_polygon_account=False
-
-# dataframe, nan_report = raw_data(polygon_api_key, tkr, start_date, end_date, temporal_granularity, paid_polygon_account=False)
-
 
 
 

@@ -17,7 +17,7 @@ import warnings
 warnings.warn = warn
 
 
-def DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, pop_scalar=23, clean_generations=1, assimilated_generations=3, min_scoring_quantile=0.7, use_apex=True, use_apex_genesis=False):
+def DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, population_scalar=23, clean_generations=1, assimilated_generations=3, min_scoring_quantile=0.7, use_apex=True, use_apex_genesis=False):
     '''
     Parameters
     ----------
@@ -31,7 +31,7 @@ def DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, pop
         DESCRIPTION. Each dictionary in the list provides ranges of values for the flexible input parameters of the functions in the list above
     temporal_granularity : TYPE string
         DESCRIPTION. Duration of aggregate stock data bars used to generate the data.
-    pop_scalar : TYPE, integer
+    population_scalar : TYPE, integer
         DESCRIPTION. The default is 23. For each feature parameter listed in the input parameter dictionary, this many individuals will be made per generation.
     clean_generations : TYPE, integer
         DESCRIPTION. The number of generations of features to test and evolve with flexible 'lag' and 'growth_threshold' values, after generation 0.
@@ -42,6 +42,8 @@ def DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, pop
         to contribute to the fixed 'lag' and 'growth_threshold' values.
     use_apex : TYPE, boolean
         DESCRIPTION. When True, and if a previous record of high performing features is available, their top performing 'Individuals' will be injected into generation 0.
+    use_apex_genesis : TYPE boolean
+        DESCRIPTION. When True, apex 'Individuals' with the same temporal_granularity (irregardless of the stock) will be used. Ideal when training a model on a new stock.
 
     Returns
     -------
@@ -61,10 +63,10 @@ def DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, pop
     ind_lineages = []
     for i in range(len(func_list)):
         try:
-            ind_lineages.append(DP.DEAP_clean(tkr, stock_df, func_list[i], dict_list[i], temporal_granularity, population_scalar=pop_scalar, 
+            ind_lineages.append(DP.DEAP_clean(tkr, stock_df, func_list[i], dict_list[i], temporal_granularity, population_scalar=population_scalar, 
                                               max_generations=clean_generations,use_apex=use_apex, use_apex_genesis=use_apex_genesis))
         except KeyboardInterrupt:
-            break
+            return
         except Exception as e:
             # Handle the error from the 'Initialize' function
             print(f"Error occurred at iteration i = {i}. Indicator: {func_list[i]}.")
@@ -84,11 +86,11 @@ def DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, pop
     for i in range(len(func_list)):
         try:
             assimilated_lineages.append(DP.DEAP_clean(tkr, stock_df, func_list[i], dict_list[i], temporal_granularity, 
-                                                      population_scalar=pop_scalar, max_generations=assimilated_generations, 
+                                                      population_scalar=population_scalar, max_generations=assimilated_generations, 
                                                       fix_lag_growth=True, assigned_lag=average_lag, assigned_growth_thresh=average_growth_threshold,
                                                       use_apex=use_apex, use_apex_genesis=use_apex_genesis))
         except KeyboardInterrupt:
-            break
+            return
         except Exception as e:
               # Handle the error from the 'Initialize' function
               print(f"Error occurred at iteration i = {i}. Indicator: {func_list[i]}.")
@@ -99,37 +101,3 @@ def DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, pop
     evolved_df = pd.concat(assimilated_lineages).reset_index(drop=True)
     
     return evolved_df
-
-######################################################################################################################################################
-# Troubleshooting Variables
-# dataframe = test_masterbase.copy()
-# temporal_granularity = 'one-minute'
-# stock_df = dataframe.copy().reset_index(drop=True)
-# func_list = [getattr(fo, name) for name, obj in inspect.getmembers(fo) if inspect.isfunction(obj)]
-# dict_list = [getattr(fo, str(func_list[i]).strip().split()[1] + '_deap_params') for i in range(len(func_list))]
-# for dictionary in dict_list:
-#     dictionary.update(fo.lag_growth_thresh_tiers[temporal_granularity]) # Add temporally specific lag/growth_threshold value ranges
-# pop_scalar=3
-# clean_generations=1
-# assimilated_generations=1
-# min_scoring_quantile=0.7
-# use_apex=True
-# test_evolved = DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, pop_scalar, clean_generations, assimilated_generations, min_scoring_quantile)
-######################################################################################################################################################
-
-
-
-### TEST ###
-# from raw_data import raw_data
-# polygon_api_key = "GpjjoRW_XKUaCLvWWurjuMUwF34oHvpD" 
-# tkr = "NVDA"
-# start_date = "2022-02-01"
-# end_date = "2022-03-12"
-# dataframe, nan_report = raw_data(polygon_api_key, tkr, start_date, end_date, paid_polygon_account=False)
-# import feature_functions as ff
-# import inspect
-# need_cleaning = [name for name, obj in inspect.getmembers(ff) if inspect.isfunction(obj)]
-# func_list = [getattr(ff, name) for name in need_cleaning]
-# dict_list = [getattr(ff, name + '_deap_params') for name in need_cleaning]
-
-# test_evolved_indicators = DEAP_ensemble(dataframe, func_list, dict_list, pop_scalar=5, clean_generations=1, assimilated_generations=1, min_scoring_quantile=0.7, use_apex=True)

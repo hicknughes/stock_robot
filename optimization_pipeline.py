@@ -11,7 +11,8 @@ Not utilized in the final pipeline, RF_gutcheck() employs a random forest model 
 
 import pandas as pd
 import numpy as np
-import feature_functions as fo
+import feature_origin as fo
+import temporal_backend as tb
 import Indicator_Building_Blocks as ind
 import DEAP_precision as DP
 import time
@@ -25,10 +26,9 @@ import DEAP_ensemble as DPe
 from sklearn.metrics import f1_score, accuracy_score, recall_score, precision_score
 import matplotlib.pyplot as plt
 import autokeras as ak
-import tensorflow as tf
 import tensorflow.keras.metrics
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Dense, ReLU, Activation, LayerNormalization
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.layers import Input, Dense, ReLU, Dropout, BatchNormalization, Activation, LayerNormalization, LSTM
 from tensorflow.keras.layers.experimental.preprocessing import CategoryEncoding
 from sklearn.feature_selection import RFECV
 from sklearn.model_selection import TimeSeriesSplit
@@ -36,8 +36,11 @@ from sklearn.ensemble import RandomForestClassifier
 
 
 def clean_features(tkr, dataframe, temporal_granularity, N_obvs_used4_deap=25000, deployment_model=False, pseudo_test_days=0, 
-                   troubleshooting=False, clean_generations=1, assimilated_generations=3, use_apex=True, fresh_apex=False, use_apex_genesis=False):
+                   troubleshooting=False, clean_generations=1, assimilated_generations=3, population_scalar=23, use_apex=True, fresh_apex=False, use_apex_genesis=False):
     '''
+    This function performs the entire genetic programming process for a given stock to create
+    custom features.
+    
     Parameters
     ----------
     tkr : TYPE string
@@ -63,6 +66,9 @@ def clean_features(tkr, dataframe, temporal_granularity, N_obvs_used4_deap=25000
     assimilated_generations : TYPE, integer
         DESCRIPTION. The number of generations of features to test and evolve with fixed 'lag' and 'growth_threshold' 
         values, after generation 0.
+    population_scalar : TYPE, integer
+        DESCRIPTION. The default is 23. For each feature parameter listed in the input parameter dictionary, this many 
+        individuals will be made per generation.
     use_apex : TYPE, boolean
         DESCRIPTION. When True, and if a previous record of high performing features is available, their top performing 
         'Individuals' will be injected into generation 0.
@@ -92,17 +98,17 @@ def clean_features(tkr, dataframe, temporal_granularity, N_obvs_used4_deap=25000
     if deployment_model == False: # 80/20 train/test split for general model performance review
         cutoff = round(0.8 * dataframe.day.nunique())
         unique_days_selected = dataframe.day.unique()[cutoff-deap_days:cutoff]
-        data_big = dataframe[dataframe['day'].isin(unique_days_selected)].reset_index(drop=True)
+        stock_df = dataframe[dataframe['day'].isin(unique_days_selected)].reset_index(drop=True)
     
     # Select DEAP optimization data for deployment model with desired test days
     elif deployment_model == True and pseudo_test_days > 0:
         unique_days_selected = dataframe.day.unique()[-deap_days-pseudo_test_days:-pseudo_test_days]
-        data_big = dataframe[dataframe['day'].isin(unique_days_selected)].reset_index(drop=True)
+        stock_df = dataframe[dataframe['day'].isin(unique_days_selected)].reset_index(drop=True)
         
     # Select DEAP optimization data for deployment model with no test days
     elif deployment_model == True and pseudo_test_days == 0:
         unique_days_selected = dataframe.day.unique()[-deap_days:]
-        data_big = dataframe[dataframe['day'].isin(unique_days_selected)].reset_index(drop=True)
+        stock_df = dataframe[dataframe['day'].isin(unique_days_selected)].reset_index(drop=True)
     
     # Load all custome indicator (feature) functions present in feature_origin.py
     need_cleaning = [name for name, obj in inspect.getmembers(fo) if inspect.isfunction(obj)]
@@ -111,10 +117,10 @@ def clean_features(tkr, dataframe, temporal_granularity, N_obvs_used4_deap=25000
         need_cleaning = need_cleaning[2:4]
     
     # Create lists to access functions and dictionaries properly
-    fo_functions = [getattr(fo, name) for name in need_cleaning]
-    fo_function_dicts = [getattr(fo, name + '_deap_params') for name in need_cleaning]
-    for dictionary in fo_function_dicts:
-        dictionary.update(fo.lag_growth_thresh_tiers[temporal_granularity]) # Add temporally specific lag/growth_threshold value ranges
+    func_list = [getattr(fo, name) for name in need_cleaning]
+    dict_list = [getattr(fo, name + '_deap_params') for name in need_cleaning]
+    for dictionary in dict_list:
+        dictionary.update(tb.lag_growth_thresh_tiers[temporal_granularity]) # Add temporally specific lag/growth_threshold value ranges
     
     # Ensure that each dictionary of properly named parameters exists in 'fo' script
     for attribute_name in [name + '_deap_params' for name in need_cleaning]:
@@ -123,10 +129,10 @@ def clean_features(tkr, dataframe, temporal_granularity, N_obvs_used4_deap=25000
     # Ensure that each feature only adds one column to the df
     df_mini = dataframe[:500].copy()
     num_columns = len(df_mini.columns)
-    for i in range(len(fo_functions)):
+    for i in range(len(func_list)):
         df_plus_one = df_mini.copy()
-        function = fo_functions[i]
-        deap_params = fo_function_dicts[i]
+        function = func_list[i]
+        deap_params = dict_list[i]
         random_params = DP.initialize_individual(deap_params)
         remaining_params = {
             k: v for k, v in random_params.items()
@@ -138,8 +144,8 @@ def clean_features(tkr, dataframe, temporal_granularity, N_obvs_used4_deap=25000
         assert len(df_plus_one.columns) == num_columns + 1, f'{function} added more than one column to dataframe'
 
     # Perform cleaning on filtered, functioning, one-column indicators
-    round_of_cleaned = DPe.DEAP_ensemble(tkr, data_big, fo_functions, fo_function_dicts, temporal_granularity, 
-                                         pop_scalar=15, clean_generations=clean_generations, assimilated_generations=assimilated_generations, 
+    round_of_cleaned = DPe.DEAP_ensemble(tkr, stock_df, func_list, dict_list, temporal_granularity, 
+                                         population_scalar=population_scalar, clean_generations=clean_generations, assimilated_generations=assimilated_generations, 
                                          min_scoring_quantile=0.75, use_apex=use_apex, use_apex_genesis=use_apex_genesis)
     
     ## Load, clean and save the new Apex Record
@@ -198,6 +204,9 @@ def count_nan_rows_after_index(group, morning_drops):
 
 def cleaned_to_X(dataframe, cleaned_indicators, temporal_granularity, select_intelligent=True, num_indicators=16, select_top=False, inverse_quantile = 0.4, assimilated=True):
     '''
+    This function selects top performing featues and uses their optimal parameter values 
+    to calculate and add them to the data for training/testing.
+    
     Parameters
     ----------
     dataframe : TYPE pandas.DataFrame
@@ -244,23 +253,22 @@ def cleaned_to_X(dataframe, cleaned_indicators, temporal_granularity, select_int
         average_lag, average_growth_threshold = np.average(selected_indicators[['lag', 'growth_threshold']], weights=selected_indicators['scoring_metric'], axis=0)
         average_lag = round(average_lag)
     elif assimilated == True:
-        average_lag, average_growth_threshold = cleaned_indicators['lag'][0], cleaned_indicators['growth_threshold'][0]
-
+        average_lag, average_growth_threshold = cleaned_indicators['lag'][0], cleaned_indicators['growth_threshold'][0]    
+    
     # From selected_indicators, Add indicators to dataframe, column by column, day by day to avoid overlapping data across days
     running_df = dataframe.copy().reset_index(drop=True)
-    if temporal_granularity in {'one_minute', 'three_minute', 'five_minute'}:
+    if temporal_granularity in tb.daily_granularities:
         for i in range(len(selected_indicators)):
             function = getattr(fo, selected_indicators['indicator'][i])
             cleaned_params = ast.literal_eval(str(selected_indicators['cleaned_params'][i]))
             next_df = ind.daily_indicator(running_df, function, cleaned_params)
             running_df = next_df.copy()
-    elif temporal_granularity in {'fifteen_minute', 'one_hour', 'one_day'}:
+    elif temporal_granularity in tb.overnight_granularities:
         for i in range(len(selected_indicators)):
             function = getattr(fo, selected_indicators['indicator'][i])
             cleaned_params = ast.literal_eval(str(selected_indicators['cleaned_params'][i]))
             next_df = function(running_df, **cleaned_params) #Generate indicator column
             running_df = next_df.copy()
-
     # NaN check to ensure features are functioning correctly & not producing unexpected NaN's    
     nan_counts = running_df.isna().sum()  # Count NaN values in each column
     num_days = len(running_df.day.unique()) 
@@ -279,17 +287,21 @@ def cleaned_to_X(dataframe, cleaned_indicators, temporal_granularity, select_int
 
     # Establishing a record to check against later
     days_pre_na_drop = list(running_df.day.unique())
-
+    
     # Calculate our outcome variable for model training based on lag and growth_threshold values
-    if temporal_granularity in {'one_minute', 'three_minute', 'five_minute'}:
-        Xy = running_df.groupby('day').apply(lambda x: ind.growth_calc(x.reset_index(drop=True), lag=average_lag, growth_threshold=average_growth_threshold))
-    elif temporal_granularity in {'fifteen_minute', 'one_hour', 'one_day'}:
-        Xy = ind.growth_calc(running_df.reset_index(drop=True), lag=average_lag, growth_threshold=average_growth_threshold)
-
-    # Training model only on data that falls within trading hours    
-    markets_open = datetime.time(9, 30)
-    markets_close = datetime.time(16, 0)
-    Xy = Xy[Xy['timemerge_dt'].dt.time.between(markets_open, markets_close)]
+    if temporal_granularity in tb.daily_granularities:
+        Xy = running_df.groupby('day').apply(lambda x: ind.single_day_growth_calc(x.reset_index(drop=True), lag=average_lag, growth_threshold=average_growth_threshold, temporal_granularity=temporal_granularity))
+    elif (temporal_granularity in tb.overnight_granularities) and (temporal_granularity != 'one_day'):
+        Xy = ind.growth_calc_on_close(running_df.reset_index(drop=True), lag=average_lag, growth_threshold=average_growth_threshold, temporal_granularity=temporal_granularity)
+    elif (temporal_granularity == 'one_day'):
+        Xy = ind.oneday_growth_calc(running_df.reset_index(drop=True), lag=average_lag, growth_threshold=average_growth_threshold, temporal_granularity=temporal_granularity)
+         
+    
+    if temporal_granularity != 'one_day':    
+        # Training model only on data that falls within trading hours    
+        markets_open = datetime.time(9, 30)
+        markets_close = datetime.time(15, 59)
+        Xy = Xy[Xy['timemerge_dt'].dt.time.between(markets_open, markets_close)]
     
     # Preserve unscaled close values for later use (in intelligent trade optimization)
     Xy['close_actual'] = Xy['close']
@@ -314,13 +326,24 @@ def cleaned_to_X(dataframe, cleaned_indicators, temporal_granularity, select_int
     return Xy, selected_indicators, nan_report
 
 
-
-def standard_nn(Xy, epochs=3, deployment_model=True, pseudo_test_days=0):
+def LSTM_RNN(Xy, lag, temporal_granularity, sequence_length=5, num_layers=1, num_units=64, epochs=3, deployment_model=True, pseudo_test_days=0):
     '''
+    This function creates a LSTM model with flexible architecture that the user can define.
+    
     Parameters
     ----------
     Xy : TYPE pandas.DataFrame
         DESCRIPTION. Xy output of cleaned_to_X()
+    lag : TYPE integer
+       DESCRIPTION. The number of minutes over which the model is trained to predict growth. 
+    temporal_granularity : TYPE string
+        DESCRIPTION. Duration of aggregate stock data bars used to generate the data.
+    sequence_length : TYPE, integer
+        DESCRIPTION. Sequence length for LSTM model data pre-processing.
+    num_layers : TYPE, integer
+        DESCRIPTION. The number of layers in the LSTM model.
+    num_units : TYPE, integer
+        DESCRIPTION. The number of units in each LSTM layer.
     epochs : TYPE, integer
         DESCRIPTION. The number of epochs to train the neural net model with.
     deployment_model : TYPE, boolean
@@ -336,13 +359,18 @@ def standard_nn(Xy, epochs=3, deployment_model=True, pseudo_test_days=0):
         DESCRIPTION. A list of all the days from which data came to train the model
     test_days : TYPE list of strings
         DESCRIPTION. A list of all the days omitted from the model training process
-
+    model_stats : TYPE dictionary
+        DESCRIPTION. A dictionary outlining the number of layers and units used in model construction.
     '''
     #Train/Test split
     if deployment_model==False:
         cutoff = round(0.8 * Xy.day.nunique())
     elif deployment_model==True:
         cutoff = Xy.day.nunique() - pseudo_test_days
+    
+    # Removing the last 'lag' periods of the day so that the model is trained on lag periods allowing for full growth potential
+    if temporal_granularity != 'one_day':
+        Xy = Xy.groupby('day').apply(lambda group: group.iloc[:-lag]).reset_index(drop=True)
     
     train_days = Xy.day.unique()[:cutoff].tolist()
     test_days = Xy.day.unique()[cutoff:].tolist()
@@ -352,6 +380,96 @@ def standard_nn(Xy, epochs=3, deployment_model=True, pseudo_test_days=0):
     X_train = train_Xy.drop(columns = ['open', 'high', 'low', 'day', 'timemerge', 'timemerge_dt','lag_growth', 'growth_ind', 'close_actual'])
     y_train = train_Xy['growth_ind']
     
+    # Function to create sequences from the data (mandatory for RNN's)
+    def create_sequences(data, target, sequence_length):
+        sequences, labels = [], []
+        for i in range(len(data) - sequence_length + 1):
+            sequence = data[i : i + sequence_length]
+            label = target[i + sequence_length - 1]
+            sequences.append(sequence)
+            labels.append(label)
+        return np.array(sequences), np.array(labels)
+        
+    # Create sequences and labels
+    X_train_seqs, y_train_seqs = create_sequences(X_train, y_train, sequence_length)
+    
+    # # Define the input layer
+    output_model = Sequential()
+    for L in range(num_layers):
+        # Add an LSTM layer with a defined number of units, input_shape should be (sequence_length, num_features)
+        if num_layers == 1:
+            output_model.add(LSTM(num_units, input_shape=(X_train_seqs.shape[1], X_train_seqs.shape[2])))
+        elif num_layers > 1:
+            if L == 0:
+                # For the first layer, use the input_shape based on X_train_seqs
+                output_model.add(LSTM(num_units, input_shape=(X_train_seqs.shape[1], X_train_seqs.shape[2]), return_sequences=True))
+            elif L < num_layers-1:
+                # For subsequent layers, dynamically adjust input_shape based on the previous layer's output shape
+                output_model.add(LSTM(num_units, input_shape=(None, sequence_length, num_units), return_sequences=True))
+            elif L == num_layers-1:
+                # For the final layer, adjust return_sequence for proper output dimensions
+                output_model.add(LSTM(num_units, input_shape=(None, sequence_length, num_units),  return_sequences=False))
+        output_model.add(Dropout(0.5))
+    # Add a dense layer for binary classification
+    output_model.add(Dense(units=1, activation='sigmoid'))
+    # Compile the model
+    output_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    # Display model summary for confirmation
+    output_model.summary()
+
+    # Train model
+    output_model.fit(X_train_seqs, y_train_seqs, epochs=epochs, verbose=1)
+    
+    # Save model stats for record
+    model_stats = {'num_layers': num_layers,
+                   'num_units': num_units}
+    
+    return output_model, train_days, test_days, model_stats
+
+def standard_nn(Xy, lag, temporal_granularity, epochs=3, deployment_model=True, pseudo_test_days=0):
+    '''
+    This function creates a neural net model for price movement prediction.
+    
+    Parameters
+    ----------
+    Xy : TYPE pandas.DataFrame
+        DESCRIPTION. Xy output of cleaned_to_X()
+    lag : TYPE integer
+       DESCRIPTION. The number of minutes over which the model is trained to predict growth. 
+    epochs : TYPE, integer
+        DESCRIPTION. The number of epochs to train the neural net model with.
+    deployment_model : TYPE, boolean
+        DESCRIPTION. Whether the model will be used in live trading deployment; adjusting the train/test split accordingly
+    pseudo_test_days : TYPE, integer
+        DESCRIPTION. The number of final days in the dataset to be used as a test set, if desired.
+
+    Returns
+    -------
+    output_model : TYPE keras.src.engine.functional.Functional
+        DESCRIPTION. A neural net model trained on the defined training data set
+    train_days : TYPE list of strings
+        DESCRIPTION. A list of all the days from which data came to train the model
+    test_days : TYPE list of strings
+        DESCRIPTION. A list of all the days omitted from the model training process
+    '''
+    #Train/Test split
+    if deployment_model==False:
+        cutoff = round(0.8 * Xy.day.nunique())
+    elif deployment_model==True:
+        cutoff = Xy.day.nunique() - pseudo_test_days
+    
+    # Removing the last 'lag' periods of the day so that the model is trained on lag periods allowing for full growth potential
+    if temporal_granularity != 'one_day':
+        Xy = Xy.groupby('day').apply(lambda group: group.iloc[:-lag]).reset_index(drop=True)
+    
+    train_days = Xy.day.unique()[:cutoff].tolist()
+    test_days = Xy.day.unique()[cutoff:].tolist()
+    train_Xy = Xy[Xy['day'].isin(train_days)].reset_index(drop=True)
+
+    # Create X-matrix 'X_train' and the outcome variable vector 'y_train' 
+    X_train = train_Xy.drop(columns = ['open', 'high', 'low', 'day', 'timemerge', 'timemerge_dt','lag_growth', 'growth_ind', 'close_actual'])
+    y_train = train_Xy['growth_ind']
+
     ## Construct model architecture
     input_layer = Input(shape=(X_train.shape[1],), name='input_1') # Define the input layer
     dense_layer_1 = Dense(units=64, name='dense')(input_layer) # Define the first Dense layer with ReLU activation
@@ -367,14 +485,18 @@ def standard_nn(Xy, epochs=3, deployment_model=True, pseudo_test_days=0):
     return output_model, train_days, test_days
 
 
-def AK(Xy, tkr, max_trials=10, epochs=3, deployment_model=False, pseudo_test_days=0, graph_test_results=False):
+def AK(Xy, tkr, lag, temporal_granularity, max_trials=10, epochs=3, deployment_model=False, pseudo_test_days=0, graph_test_results=False):
     '''
+    This function utilizes AutoKeras' AutoML framework to explore NN model architectures, exporting the optimal model.
+    
     Parameters
     ----------
     Xy : TYPE pandas.DataFrame
         DESCRIPTION. Xy output of cleaned_to_X()
     tkr : TYPE string
         DESCRIPTION. The ticker symbol of the stock being modelled
+    lag : TYPE integer
+        DESCRIPTION. The number of minutes over which the model is trained to predict growth. 
     max_trials : TYPE, integer
         DESCRIPTION. The number of different neural net model architectures that should be tested
     epochs : TYPE, integer
@@ -402,6 +524,10 @@ def AK(Xy, tkr, max_trials=10, epochs=3, deployment_model=False, pseudo_test_day
         cutoff = round(0.8 * Xy.day.nunique())
     elif deployment_model==True:
         cutoff = Xy.day.nunique() - pseudo_test_days
+    
+    # Removing the last 'lag' periods of the day so that the model is trained on lag periods allowing for full growth potential
+    if temporal_granularity != 'one_day':
+        Xy = Xy.groupby('day').apply(lambda group: group.iloc[:-lag]).reset_index(drop=True)
     
     train_days = Xy.day.unique()[:cutoff]
     test_days = Xy.day.unique()[cutoff:]
@@ -481,6 +607,8 @@ def AK(Xy, tkr, max_trials=10, epochs=3, deployment_model=False, pseudo_test_day
 
 def RF_gutcheck(X_train, X_test, y_train, y_test, graph_test_results=False):
     '''
+    This function was used as a baseline gutcheck to compare performance against using a RandomForest model.
+    
     Parameters
     ----------
     X_train : TYPE pandas.DataFrame
