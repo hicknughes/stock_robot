@@ -17,7 +17,6 @@ STAGE 2: Deploy the Predictive Model for Live Trading
 - At the end of each trading day on which trades were executed, a stock-specific trade record is saved 
 
 STAGE 1 Scripts:
-The chronology of processes are as follows:
 - temporal_backend.py houses all the temporal_granularity-specific information used throughout the pipeline to differentiate the way data and workflows are handled.
 - raw_data.py will generate historical data at the chosen time interval (1-minute, 1-hour, etc.) for a given stock.
 - feature_functions.py houses the custom feature functions which utilize the above stock data, as well as input parameters, to generate the custom feature values used for predictive modeling. It also houses dictionaries of input parameter value ranges that define the gridspace on which to search for optimal feature input parameter values
